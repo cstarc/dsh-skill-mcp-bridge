@@ -234,19 +234,40 @@ function renderPanel() {
 
 function apply(ctx) {
   ctx.effect(async () => {
-    try {
-      const dispose = await ctx.remote.$mount(BRIDGE_REMOTE)
-      if (ctx.reflect.get("remote.skillMcpBridge") === void 0) {
-        console.error("dsh-skill-mcp-bridge: the skillMcpBridge Remote namespace did not mount")
-      }
-      return () => { void dispose() }
-    } catch (e) {
-      console.error("dsh-skill-mcp-bridge: remote mount failed:", e)
+    const setDiag = (text) => {
       try {
         if (typeof window !== "undefined") {
-          window.__bridgeMountError = String((e && e.stack) || e)
+          window.__bridgeMountError = text
         }
       } catch (err) { /* ignore */ }
+    }
+    try {
+      // $mount 内部是 fire-and-forget 的 effect：其异步错误被 Cordis 静默。
+      // 加 10s 超时以区分「挂起」与「挂载失败」，并把结果如实暴露给面板。
+      const mountResult = await Promise.race([
+        ctx.remote.$mount(BRIDGE_REMOTE),
+        new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), 10000)),
+      ])
+      if (mountResult && mountResult.__timeout) {
+        setDiag("remote.$mount 10 秒未完成（挂起）：gateway client 队列或命名空间 fiber 未 settle")
+        return () => { /* 挂起：面板显示超时提示 */ }
+      }
+      if (ctx.reflect.get("remote.skillMcpBridge") === void 0) {
+        let remoteInfo = "unknown"
+        try {
+          const rm = ctx.remote
+          remoteInfo = (rm && rm.constructor && rm.constructor.name) || "no-ctor"
+        } catch (e) { /* ignore */ }
+        console.error("dsh-skill-mcp-bridge: the skillMcpBridge Remote namespace did not mount")
+        setDiag("$mount 已返回但 remote.skillMcpBridge 未挂载（mountContribution 静默失败）；ctx.remote 类型=" + remoteInfo)
+        return () => { /* 挂载失败：面板将显示错误 */ }
+      }
+      return () => {
+        try { void mountResult() } catch (e) { /* ignore */ }
+      }
+    } catch (e) {
+      console.error("dsh-skill-mcp-bridge: remote mount failed:", e)
+      setDiag(String((e && e.stack) || e))
       return () => { /* 挂载失败：面板将显示不可用提示 */ }
     }
   }, "dsh-skill-mcp-bridge: remote mount")

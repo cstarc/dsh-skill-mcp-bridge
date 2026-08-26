@@ -510,7 +510,7 @@ export default {
     const mcpConnections = new Map()
     const NODE_FALLBACKS = ["/root/.nvm/versions/node/v24.18.0/bin/node", "/usr/bin/node", "/usr/local/bin/node"]
     const SCHEMA_TYPES = new Set(["string", "number", "integer", "boolean", "null", "object", "array"])
-    const SCHEMA_NODE_KEYS = ["type", "properties", "required", "items", "description", "title", "default", "examples"]
+    const SCHEMA_NODE_KEYS = ["type", "properties", "required", "items", "description", "title", "default", "examples", "enum", "const", "oneOf"]
 
     function sanitizeMcpSchema(schema) {
       const sanitizeNode = (node, isRoot) => {
@@ -539,9 +539,28 @@ export default {
             if (sub) out.items = sub
           } else if (k === "required") {
             if (Array.isArray(v)) out.required = v.filter((x) => typeof x === "string")
+          } else if (k === "enum") {
+            if (Array.isArray(v) && v.length > 0) {
+              const scalars = v.filter((x) => typeof x === "string" || typeof x === "number" || typeof x === "boolean")
+              if (scalars.length > 0) out.enum = scalars
+            }
+          } else if (k === "const") {
+            if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out.const = v
+          } else if (k === "oneOf") {
+            if (Array.isArray(v)) {
+              const branches = []
+              for (const branch of v) {
+                const sub = sanitizeNode(branch, false)
+                if (sub) branches.push(sub)
+              }
+              if (branches.length >= 2) out.oneOf = branches
+            }
           } else if (typeof v === "string") {
             out[k] = v
           }
+        }
+        if (out.type === "object" || (out.type === undefined && out.properties !== undefined)) {
+          out.additionalProperties = true
         }
         return out
       }
@@ -553,6 +572,19 @@ export default {
         if (root.required.length === 0) delete root.required
       }
       return root
+    }
+
+    // 静态版 defineTool 的 parameters 是「属性名 → value schema」映射，
+    // required 通过属性级 required: true 表达（非根 required 数组）。
+    function mcpSchemaToParameters(inputSchema) {
+      const root = sanitizeMcpSchema(inputSchema)
+      const map = {}
+      const requiredSet = new Set(Array.isArray(root.required) ? root.required : [])
+      for (const name of Object.keys(root.properties || {})) {
+        const prop = root.properties[name]
+        map[name] = requiredSet.has(name) ? { ...prop, required: true } : prop
+      }
+      return map
     }
 
     function sanitizeName(name) {
@@ -784,7 +816,7 @@ export default {
         if (!rawName || typeof rawName !== "string") continue
         const publicName = toolNameOf(server.name, rawName)
         const description = (t.description && String(t.description)) || ("MCP 工具 " + rawName + "（" + server.name + "）")
-        const parameters = sanitizeMcpSchema(t.inputSchema)
+        const parameters = mcpSchemaToParameters(t.inputSchema)
         try {
           const tool = defineTool({
             name: publicName,

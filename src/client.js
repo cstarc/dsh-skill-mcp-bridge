@@ -7,6 +7,39 @@ const BRIDGE_REMOTE = {
   descriptors: BRIDGE_INVOCATIONS,
 }
 
+// ErrorBoundary：面板内部任何异常只显示错误卡片，绝不拖垮设置页/工具视图。
+class PanelBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: undefined }
+  }
+  static getDerivedStateFromError(error) {
+    return { error: String(error && error.message ? error.message : error) }
+  }
+  componentDidCatch(error, info) {
+    console.error("skill-mcp-bridge panel error:", error, info)
+  }
+  render() {
+    if (this.state.error !== undefined) {
+      return React.createElement("div", { style: { border: "1px solid #f0c0c0", borderRadius: 8, padding: "10px 12px", background: "#fff5f5", fontFamily: "inherit", fontSize: 13 } },
+        "项目桥接面板渲染失败：", React.createElement("code", null, this.state.error),
+        React.createElement("div", { style: { fontSize: 11, color: "#999", marginTop: 6 } }, "请刷新页面重试；若持续出现，查看浏览器控制台与 <工作区>/.claude/bridge-diag.log。")
+      )
+    }
+    return this.props.children
+  }
+}
+
+function safeRemote() {
+  try {
+    const r = ctx.reflect.get("remote.skillMcpBridge")
+    return r === undefined || r === null ? undefined : r
+  } catch (e) {
+    console.error("skill-mcp-bridge remote unavailable:", e)
+    return undefined
+  }
+}
+
 function renderPanel() {
   const [payload, setPayload] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
@@ -19,32 +52,52 @@ function renderPanel() {
 
   React.useEffect(() => {
     let alive = true
-    const remote = ctx.reflect.get("remote.skillMcpBridge")
-    if (remote === void 0) { setLoading(false); return }
-    remote.status().then((result) => {
-      if (alive) apply(result)
-    }).catch(() => { if (alive) setLoading(false) })
+    try {
+      const remote = safeRemote()
+      if (remote === undefined) { setLoading(false); return }
+      remote.status().then((result) => {
+        if (alive) apply(result)
+      }).catch(() => { if (alive) setLoading(false) })
+    } catch (e) {
+      if (alive) setLoading(false)
+    }
     return () => { alive = false }
   }, [])
 
   const toggleRoot = (root, next) => {
     setLoading(true)
-    ctx.reflect.get("remote.skillMcpBridge").setEnabled({ root, enabled: next }).then(apply).catch(() => setLoading(false))
+    try {
+      const r = safeRemote()
+      if (r === undefined) { setLoading(false); return }
+      r.setEnabled({ root, enabled: next }).then(apply).catch(() => setLoading(false))
+    } catch (e) { setLoading(false) }
   }
 
   const toggleMcp = (name, next) => {
     setLoading(true)
-    ctx.reflect.get("remote.skillMcpBridge").setEnabled({ mcp: name, enabled: next }).then(apply).catch(() => setLoading(false))
+    try {
+      const r = safeRemote()
+      if (r === undefined) { setLoading(false); return }
+      r.setEnabled({ mcp: name, enabled: next }).then(apply).catch(() => setLoading(false))
+    } catch (e) { setLoading(false) }
   }
 
   const rescan = () => {
     setLoading(true)
-    ctx.reflect.get("remote.skillMcpBridge").rescan().then(apply).catch(() => setLoading(false))
+    try {
+      const r = safeRemote()
+      if (r === undefined) { setLoading(false); return }
+      r.rescan().then(apply).catch(() => setLoading(false))
+    } catch (e) { setLoading(false) }
   }
 
   const reconnect = (name) => {
     setLoading(true)
-    ctx.reflect.get("remote.skillMcpBridge").reconnectMcp(name ? { name } : {}).then(apply).catch(() => setLoading(false))
+    try {
+      const r = safeRemote()
+      if (r === undefined) { setLoading(false); return }
+      r.reconnectMcp(name ? { name } : {}).then(apply).catch(() => setLoading(false))
+    } catch (e) { setLoading(false) }
   }
 
   const roots = (payload && payload.roots) || []
@@ -144,21 +197,26 @@ function renderPanel() {
 
 function apply(ctx) {
   ctx.effect(async () => {
-    const dispose = await ctx.remote.$mount(BRIDGE_REMOTE)
-    if (ctx.reflect.get("remote.skillMcpBridge") === void 0) {
-      throw new Error("dsh-skill-mcp-bridge: the skillMcpBridge Remote namespace did not mount")
+    try {
+      const dispose = await ctx.remote.$mount(BRIDGE_REMOTE)
+      if (ctx.reflect.get("remote.skillMcpBridge") === void 0) {
+        console.error("dsh-skill-mcp-bridge: the skillMcpBridge Remote namespace did not mount")
+      }
+      return () => { void dispose() }
+    } catch (e) {
+      console.error("dsh-skill-mcp-bridge: remote mount failed:", e)
+      return () => { /* 挂载失败：面板将显示不可用提示 */ }
     }
-    return () => { void dispose() }
   }, "dsh-skill-mcp-bridge: remote mount")
 
   ctx.slots.inject("tool.view.cordis", () => ctx.slots.register(
     { name: "tool.view.cordis", key: "self" },
-    () => renderPanel()
+    () => React.createElement(PanelBoundary, null, renderPanel())
   ))
 
   ctx.slots.inject("settings.section", () => ctx.slots.register(
     { name: "settings.section", id: "skill-mcp-bridge", order: 30, label: "项目桥接（Skills + MCP）" },
-    () => renderPanel()
+    () => React.createElement(PanelBoundary, null, renderPanel())
   ))
 }
 

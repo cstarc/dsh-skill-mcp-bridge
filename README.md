@@ -9,7 +9,23 @@ dsh（DeepSeek Harness）项目桥接插件：**自动导入 `.claude/.agents/.t
 
 ## 安装
 
-### 1. 放置插件包
+### 方式一：`dsh plugin add`（推荐）
+
+dsh CLI 内置插件安装命令（转发 pnpm），git 仓库与 npm 包均可：
+
+```bash
+# git 仓库源
+dsh plugin --profile web add github:cstarc/dsh-skill-mcp-bridge
+
+# 等价形式（与 dsh-at-file 的 git+https 依赖同机制）
+dsh plugin --profile web add git+https://github.com/cstarc/dsh-skill-mcp-bridge.git
+```
+
+- 自动写入 profile `package.json` 依赖与 `pnpm-lock.yaml`
+- **包内 `cordis.patch.yml` 会被 loader 自动应用，装完即激活**，无需手动配置
+- 若已发布到 npm registry，裸包名同样可用：`dsh plugin --profile web add dsh-skill-mcp-bridge`
+
+### 方式二：手动放置（备选）
 
 将本仓库复制到 dsh web profile 的 node_modules：
 
@@ -19,9 +35,7 @@ cp -r dsh-skill-mcp-bridge /data/.dsh/profiles/web/node_modules/
 
 （profile 使用 pnpm `nodeLinker: hoisted`，直接放目录即可被解析。）
 
-### 2. 注册插件行
-
-在 `/data/.dsh/profiles/web/cordis.patch.yml`（用户补丁层，升级不覆盖）追加：
+然后手动在 `/data/.dsh/profiles/web/cordis.patch.yml`（用户补丁层，升级不覆盖）追加：
 
 ```yaml
 - insert:
@@ -29,9 +43,11 @@ cp -r dsh-skill-mcp-bridge /data/.dsh/profiles/web/node_modules/
       name: dsh-skill-mcp-bridge
 ```
 
-### 3. 重启 dsh
+> 注意：手动放置的包不会被自动激活，必须补 insert 行；`dsh plugin add` 方式无需此步。
 
-重启后插件自动加载（无需审批）。可用以下命令在**不重启**的情况下验证组合：
+### 3. 重启与验证
+
+重启 dsh 后插件自动加载（无需审批）。可在**不重启**的情况下先验证组合：
 
 ```bash
 dsh --profile web --dump-config   # 应看到 dsh-skill-mcp-bridge 行

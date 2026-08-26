@@ -84,8 +84,19 @@ function renderPanel() {
           setLoading(false)
           return
         }
-        remote.status().then((result) => {
-          if (alive) apply(result)
+        const callStatus = (r) => Promise.race([
+          r.status(),
+          new Promise((resolve) => setTimeout(() => resolve({ __statusTimeout: true }), 10000)),
+        ])
+        callStatus(remote).then((result) => {
+          if (alive) {
+            if (result && result.__statusTimeout) {
+              setError("status() 10 秒未返回（RPC 挂起：host 端 gateway 或 /api 路由未响应，见 bridge-diag.log）")
+              setLoading(false)
+              return
+            }
+            apply(result)
+          }
         }).catch((e) => { if (alive) { setError(String((e && e.message) || e)); setLoading(false) } })
       } catch (e) {
         if (alive) setLoading(false)

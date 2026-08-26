@@ -61,25 +61,37 @@ function renderPanel() {
 
   React.useEffect(() => {
     let alive = true
-    try {
-      const remote = safeRemote()
-      if (remote === undefined) {
-        let mountErr = null
-        try {
-          mountErr = (typeof window !== "undefined" && window.__bridgeMountError) || null
-        } catch (e) { /* ignore */ }
-        setError(mountErr
-          ? "remote 挂载失败：" + mountErr
-          : "桥接通道未就绪：remote.skillMcpBridge 未挂载（若 $mount 仍挂起，可能是 gateway 连接未就绪）")
-        setLoading(false)
-        return
+    let attempts = 0
+    const MAX_ATTEMPTS = 12
+    const tryOnce = () => {
+      if (!alive) return
+      attempts += 1
+      try {
+        const remote = safeRemote()
+        if (remote === undefined) {
+          if (attempts < MAX_ATTEMPTS) {
+            // $mount 可能仍在进行：1 秒后再试
+            setTimeout(tryOnce, 1000)
+            return
+          }
+          let mountErr = null
+          try {
+            mountErr = (typeof window !== "undefined" && window.__bridgeMountError) || null
+          } catch (e) { /* ignore */ }
+          setError(mountErr
+            ? "remote 挂载失败：" + mountErr
+            : "桥接通道未就绪：remote.skillMcpBridge 未挂载（12 秒内未出现，$mount 可能挂起，查看 console）")
+          setLoading(false)
+          return
+        }
+        remote.status().then((result) => {
+          if (alive) apply(result)
+        }).catch((e) => { if (alive) { setError(String((e && e.message) || e)); setLoading(false) } })
+      } catch (e) {
+        if (alive) setLoading(false)
       }
-      remote.status().then((result) => {
-        if (alive) apply(result)
-      }).catch((e) => { if (alive) { setError(String((e && e.message) || e)); setLoading(false) } })
-    } catch (e) {
-      if (alive) setLoading(false)
     }
+    tryOnce()
     return () => { alive = false }
   }, [])
 

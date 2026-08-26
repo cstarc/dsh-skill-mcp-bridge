@@ -164,4 +164,4 @@ function apply(ctx) {
 
 const inject = ["remote", "slots"]
 
-export default { apply, inject }
+export { apply, inject }

@@ -513,7 +513,7 @@ export default {
     const SCHEMA_NODE_KEYS = ["type", "properties", "required", "items", "description", "title", "default", "examples", "enum", "const", "oneOf"]
 
     function sanitizeMcpSchema(schema) {
-      const sanitizeNode = (node, isRoot) => {
+      const sanitizeNode = (node, isRoot, allowRequired) => {
         if (!node || typeof node !== "object" || Array.isArray(node)) return isRoot ? { type: "object", properties: {} } : undefined
         const out = {}
         for (const k of Object.keys(node)) {
@@ -529,16 +529,16 @@ export default {
             if (v && typeof v === "object" && !Array.isArray(v)) {
               const props = {}
               for (const pn of Object.keys(v)) {
-                const sub = sanitizeNode(v[pn], false)
+                const sub = sanitizeNode(v[pn], false, false)
                 if (sub) props[pn] = sub
               }
               if (Object.keys(props).length > 0) out.properties = props
             }
           } else if (k === "items") {
-            const sub = sanitizeNode(v, false)
+            const sub = sanitizeNode(v, false, false)
             if (sub) out.items = sub
           } else if (k === "required") {
-            if (Array.isArray(v)) out.required = v.filter((x) => typeof x === "string")
+            if (allowRequired && Array.isArray(v)) out.required = v.filter((x) => typeof x === "string")
           } else if (k === "enum") {
             if (Array.isArray(v) && v.length > 0) {
               const scalars = v.filter((x) => typeof x === "string" || typeof x === "number" || typeof x === "boolean")
@@ -550,7 +550,7 @@ export default {
             if (Array.isArray(v)) {
               const branches = []
               for (const branch of v) {
-                const sub = sanitizeNode(branch, false)
+                const sub = sanitizeNode(branch, false, false)
                 if (sub) branches.push(sub)
               }
               if (branches.length >= 2) out.oneOf = branches
@@ -559,12 +559,24 @@ export default {
             out[k] = v
           }
         }
+        // 非标量节点（array/object/json/oneOf）不支持 enum/const，丢弃
+        if (out.oneOf !== undefined || out.type === "array" || out.type === "object" || out.type === "json") {
+          delete out.enum
+          delete out.const
+        }
+        // enum/const 无显式 type 时按值推断（MCP 惯例多为 string）
+        if (out.enum !== undefined && out.type === undefined) {
+          out.type = out.enum.every((x) => typeof x === "number") ? "number" : "string"
+        }
+        if (out.const !== undefined && out.type === undefined) {
+          out.type = typeof out.const === "number" ? "number" : "string"
+        }
         if (out.type === "object" || (out.type === undefined && out.properties !== undefined)) {
           out.additionalProperties = true
         }
         return out
       }
-      const cleaned = sanitizeNode(schema, true)
+      const cleaned = sanitizeNode(schema, true, true)
       const root = cleaned && cleaned.type === "object" ? cleaned : { type: "object", properties: {} }
       if (!root.properties || typeof root.properties !== "object") root.properties = {}
       if (Array.isArray(root.required)) {
@@ -961,7 +973,14 @@ export default {
     // ---------- Typert 面板通道实现 ----------
     const impl = {
       status() {
-        return statusPayload()
+        try {
+          const payload = statusPayload()
+          diag("status ok: roots=" + JSON.stringify(payload.roots.map((r) => r.key + ":" + r.count)) + " mcp=" + String((payload.mcp || []).length) + " lastScan=" + payload.lastScan)
+          return payload
+        } catch (e) {
+          diag("status FAILED: " + String((e && e.stack) || e))
+          throw e
+        }
       },
       async setEnabled(request) {
         await ready

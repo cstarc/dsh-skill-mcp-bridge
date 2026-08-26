@@ -45,10 +45,17 @@ function safeRemote() {
 function renderPanel() {
   const [payload, setPayload] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState(null)
 
   const apply = (result) => {
-    if (result && result.ok) setPayload(result.value)
-    else console.error("skill-mcp-bridge rpc failed", result && result.error)
+    if (result && result.ok) {
+      setError(null)
+      setPayload(result.value)
+    } else {
+      const msg = (result && result.error) || "未知 RPC 错误"
+      setError(typeof msg === "string" ? msg : JSON.stringify(msg))
+      console.error("skill-mcp-bridge rpc failed", result && result.error)
+    }
     setLoading(false)
   }
 
@@ -56,10 +63,14 @@ function renderPanel() {
     let alive = true
     try {
       const remote = safeRemote()
-      if (remote === undefined) { setLoading(false); return }
+      if (remote === undefined) {
+        setError("桥接通道未就绪：remote.skillMcpBridge 未挂载（host 端 typert 端点可能未注册）")
+        setLoading(false)
+        return
+      }
       remote.status().then((result) => {
         if (alive) apply(result)
-      }).catch(() => { if (alive) setLoading(false) })
+      }).catch((e) => { if (alive) { setError(String((e && e.message) || e)); setLoading(false) } })
     } catch (e) {
       if (alive) setLoading(false)
     }
@@ -71,7 +82,7 @@ function renderPanel() {
     try {
       const r = safeRemote()
       if (r === undefined) { setLoading(false); return }
-      r.setEnabled({ root, enabled: next }).then(apply).catch(() => setLoading(false))
+      r.setEnabled({ root, enabled: next }).then(apply).catch((e) => { setError(String((e && e.message) || e)); setLoading(false) })
     } catch (e) { setLoading(false) }
   }
 
@@ -80,7 +91,7 @@ function renderPanel() {
     try {
       const r = safeRemote()
       if (r === undefined) { setLoading(false); return }
-      r.setEnabled({ mcp: name, enabled: next }).then(apply).catch(() => setLoading(false))
+      r.setEnabled({ mcp: name, enabled: next }).then(apply).catch((e) => { setError(String((e && e.message) || e)); setLoading(false) })
     } catch (e) { setLoading(false) }
   }
 
@@ -89,7 +100,7 @@ function renderPanel() {
     try {
       const r = safeRemote()
       if (r === undefined) { setLoading(false); return }
-      r.rescan().then(apply).catch(() => setLoading(false))
+      r.rescan().then(apply).catch((e) => { setError(String((e && e.message) || e)); setLoading(false) })
     } catch (e) { setLoading(false) }
   }
 
@@ -98,7 +109,7 @@ function renderPanel() {
     try {
       const r = safeRemote()
       if (r === undefined) { setLoading(false); return }
-      r.reconnectMcp(name ? { name } : {}).then(apply).catch(() => setLoading(false))
+      r.reconnectMcp(name ? { name } : {}).then(apply).catch((e) => { setError(String((e && e.message) || e)); setLoading(false) })
     } catch (e) { setLoading(false) }
   }
 
@@ -135,6 +146,12 @@ function renderPanel() {
 
   return React.createElement("div", { style: card },
     React.createElement("div", { style: title }, "项目桥接（skills + MCP）" + (loading ? "（同步中…）" : "")),
+
+    error ? React.createElement("div", { style: { border: "1px solid #f0c0c0", borderRadius: 6, padding: "8px 10px", background: "#fff5f5", fontFamily: "inherit", fontSize: 12, marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all" } },
+      "⚠ ",
+      error,
+      React.createElement("button", { onClick: () => { setError(null); setLoading(true); try { const r = safeRemote(); if (r === undefined) { setError("桥接通道未就绪：remote.skillMcpBridge 未挂载"); setLoading(false); return } r.status().then(apply).catch((e2) => { setError(String((e2 && e2.message) || e2)); setLoading(false) }) } catch (e3) { setError(String(e3)); setLoading(false) } }, style: { marginLeft: 8, fontSize: 12, cursor: "pointer" } }, "重试")
+    ) : null,
 
     React.createElement("div", { style: section }, "技能导入"),
     roots.map((r) => React.createElement("div", { key: r.key, style: row },

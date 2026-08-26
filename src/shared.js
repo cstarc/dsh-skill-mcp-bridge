@@ -1,10 +1,8 @@
 // dsh-skill-mcp-bridge 共享 Typert Remote 声明（host 与 client 双端共用同一描述）。
-// client 端 $mount 强制 requireStrictCodec（所有 codec 必须 mode: "strict" 且带
-// schema），src-json 会被拒 → remote 不挂载。故改用 strict codec + z.unknown()
-// 宽松 schema：满足 strict 模式校验，同时不约束业务数据结构。
-import { z } from "zod"
-
-const loose = z.unknown()
+// 参考 dsh-skill-manager 的成功模式：strict codec + 手写 identity parse
+// （client 端边界只要求 schema.parse 存在；两侧各自解析，无需 zod）。
+const identity = (value) => value
+const codec = (symbol) => ({ mode: "strict", typeSymbol: symbol, schema: { parse: identity } })
 
 export const BRIDGE_INVOCATIONS = [
   {
@@ -14,7 +12,7 @@ export const BRIDGE_INVOCATIONS = [
     method: "status",
     invocation: { kind: "direct" },
     parameters: [],
-    result: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#BridgeStatus", schema: loose },
+    result: codec("dsh-skill-mcp-bridge#BridgeStatus"),
   },
   {
     id: "dsh-skill-mcp-bridge#bridge/setEnabled",
@@ -27,10 +25,11 @@ export const BRIDGE_INVOCATIONS = [
         name: "request",
         wire: "request",
         source: "json",
-        codec: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#SetEnabledRequest", schema: loose },
+        acceptsUndefined: true,
+        codec: codec("dsh-skill-mcp-bridge#SetEnabledRequest"),
       },
     ],
-    result: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#BridgeStatus", schema: loose },
+    result: codec("dsh-skill-mcp-bridge#BridgeStatus"),
   },
   {
     id: "dsh-skill-mcp-bridge#bridge/rescan",
@@ -39,7 +38,7 @@ export const BRIDGE_INVOCATIONS = [
     method: "rescan",
     invocation: { kind: "direct" },
     parameters: [],
-    result: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#BridgeStatus", schema: loose },
+    result: codec("dsh-skill-mcp-bridge#BridgeStatus"),
   },
   {
     id: "dsh-skill-mcp-bridge#bridge/reconnectMcp",
@@ -52,9 +51,10 @@ export const BRIDGE_INVOCATIONS = [
         name: "request",
         wire: "request",
         source: "json",
-        codec: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#ReconnectMcpRequest", schema: loose },
+        acceptsUndefined: true,
+        codec: codec("dsh-skill-mcp-bridge#ReconnectMcpRequest"),
       },
     ],
-    result: { mode: "strict", typeSymbol: "dsh-skill-mcp-bridge#BridgeStatus", schema: loose },
+    result: codec("dsh-skill-mcp-bridge#BridgeStatus"),
   },
 ]

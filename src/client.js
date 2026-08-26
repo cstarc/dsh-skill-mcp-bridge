@@ -32,13 +32,29 @@ class PanelBoundary extends React.Component {
   }
 }
 
+// 模块级 bridge 句柄：apply 时赋值，面板渲染时可随时取用。
+// 参考 dsh-skill-manager 的成功模式：
+//   - $mount 在 apply 中直接调用（不在 effect 内 await）
+//   - 取 remote 用 ctx.get("remote.skillMcpBridge")（$mount 注册的是 Cordis 服务），
+//     而非 ctx.reflect.get —— reflect 反射不到动态注册的命名空间，会误报"未挂载"。
+let __ctx = null
+let __mount = null
+
 function safeRemote() {
+  if (!__ctx || !__mount) return undefined
+  let remote
   try {
-    const r = ctx.reflect.get("remote.skillMcpBridge")
-    return r === undefined || r === null ? undefined : r
+    remote = __ctx.get("remote.skillMcpBridge")
   } catch (e) {
     console.error("skill-mcp-bridge remote unavailable:", e)
     return undefined
+  }
+  if (remote === undefined || remote === null) return undefined
+  return {
+    status: () => remote.status(),
+    setEnabled: (request) => remote.setEnabled(request),
+    rescan: () => remote.rescan(),
+    reconnectMcp: (request) => remote.reconnectMcp(request),
   }
 }
 
@@ -244,44 +260,33 @@ function renderPanel() {
 }
 
 function apply(ctx) {
-  ctx.effect(async () => {
-    const setDiag = (text) => {
-      try {
-        if (typeof window !== "undefined") {
-          window.__bridgeMountError = text
-        }
-      } catch (err) { /* ignore */ }
-    }
+  __ctx = ctx
+  // $mount 直接调用（不 await、不超时）：其内部 fire-and-forget effect 负责挂载。
+  // 挂载完成的异步错误无法直接观测，故把错误/挂起迹象写入 window.__bridgeMountError，
+  // 面板在轮询超时后展示；remote 就绪判定用 ctx.get（轮询自动覆盖异步完成时机）。
+  __mount = ctx.remote.$mount(BRIDGE_REMOTE)
+  __mount.then(() => {
+    // $mount 本身 resolve 很快（dispose 句柄）；mountContribution 后台执行。
+    // 留一个稍后检查：若 2 秒后仍取不到服务，记入 diag 供面板兜底提示。
     try {
-      // $mount 内部是 fire-and-forget 的 effect：其异步错误被 Cordis 静默。
-      // 加 10s 超时以区分「挂起」与「挂载失败」，并把结果如实暴露给面板。
-      const mountResult = await Promise.race([
-        ctx.remote.$mount(BRIDGE_REMOTE),
-        new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), 10000)),
-      ])
-      if (mountResult && mountResult.__timeout) {
-        setDiag("remote.$mount 10 秒未完成（挂起）：gateway client 队列或命名空间 fiber 未 settle")
-        return () => { /* 挂起：面板显示超时提示 */ }
-      }
-      if (ctx.reflect.get("remote.skillMcpBridge") === void 0) {
-        let remoteInfo = "unknown"
+      setTimeout(() => {
         try {
-          const rm = ctx.remote
-          remoteInfo = (rm && rm.constructor && rm.constructor.name) || "no-ctor"
+          const probe = ctx.get("remote.skillMcpBridge")
+          if (probe === undefined || probe === null) {
+            if (typeof window !== "undefined") {
+              window.__bridgeMountError = "$mount 已返回但 remote.skillMcpBridge 未挂载（mountContribution 静默失败）"
+            }
+          }
         } catch (e) { /* ignore */ }
-        console.error("dsh-skill-mcp-bridge: the skillMcpBridge Remote namespace did not mount")
-        setDiag("$mount 已返回但 remote.skillMcpBridge 未挂载（mountContribution 静默失败）；ctx.remote 类型=" + remoteInfo)
-        return () => { /* 挂载失败：面板将显示错误 */ }
+      }, 2000)
+    } catch (e) { /* ignore */ }
+  }).catch((e) => {
+    try {
+      if (typeof window !== "undefined") {
+        window.__bridgeMountError = String((e && e.stack) || e)
       }
-      return () => {
-        try { void mountResult() } catch (e) { /* ignore */ }
-      }
-    } catch (e) {
-      console.error("dsh-skill-mcp-bridge: remote mount failed:", e)
-      setDiag(String((e && e.stack) || e))
-      return () => { /* 挂载失败：面板将显示不可用提示 */ }
-    }
-  }, "dsh-skill-mcp-bridge: remote mount")
+    } catch (err) { /* ignore */ }
+  })
 
   ctx.slots.inject("tool.view.cordis", () => ctx.slots.register(
     { name: "tool.view.cordis", key: "self" },

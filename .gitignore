@@ -4,3 +4,4 @@ node_modules/
 # 构建缓存与临时文件
 *.log
 .DS_Store
+node_modules/

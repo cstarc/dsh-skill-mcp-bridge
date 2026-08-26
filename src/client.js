@@ -64,7 +64,13 @@ function renderPanel() {
     try {
       const remote = safeRemote()
       if (remote === undefined) {
-        setError("桥接通道未就绪：remote.skillMcpBridge 未挂载（host 端 typert 端点可能未注册）")
+        let mountErr = null
+        try {
+          mountErr = (typeof window !== "undefined" && window.__bridgeMountError) || null
+        } catch (e) { /* ignore */ }
+        setError(mountErr
+          ? "remote 挂载失败：" + mountErr
+          : "桥接通道未就绪：remote.skillMcpBridge 未挂载（若 $mount 仍挂起，可能是 gateway 连接未就绪）")
         setLoading(false)
         return
       }
@@ -150,7 +156,7 @@ function renderPanel() {
     error ? React.createElement("div", { style: { border: "1px solid #f0c0c0", borderRadius: 6, padding: "8px 10px", background: "#fff5f5", fontFamily: "inherit", fontSize: 12, marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all" } },
       "⚠ ",
       error,
-      React.createElement("button", { onClick: () => { setError(null); setLoading(true); try { const r = safeRemote(); if (r === undefined) { setError("桥接通道未就绪：remote.skillMcpBridge 未挂载"); setLoading(false); return } r.status().then(apply).catch((e2) => { setError(String((e2 && e2.message) || e2)); setLoading(false) }) } catch (e3) { setError(String(e3)); setLoading(false) } }, style: { marginLeft: 8, fontSize: 12, cursor: "pointer" } }, "重试")
+      React.createElement("button", { onClick: () => { setError(null); setLoading(true); try { const r = safeRemote(); if (r === undefined) { setError("桥接通道未就绪：remote.skillMcpBridge 未挂载（查看 console 或 bridge-diag.log）"); setLoading(false); return } r.status().then(apply).catch((e2) => { setError(String((e2 && e2.message) || e2)); setLoading(false) }) } catch (e3) { setError(String(e3)); setLoading(false) } }, style: { marginLeft: 8, fontSize: 12, cursor: "pointer" } }, "重试")
     ) : null,
 
     React.createElement("div", { style: section }, "技能导入"),
@@ -224,6 +230,11 @@ function apply(ctx) {
       return () => { void dispose() }
     } catch (e) {
       console.error("dsh-skill-mcp-bridge: remote mount failed:", e)
+      try {
+        if (typeof window !== "undefined") {
+          window.__bridgeMountError = String((e && e.stack) || e)
+        }
+      } catch (err) { /* ignore */ }
       return () => { /* 挂载失败：面板将显示不可用提示 */ }
     }
   }, "dsh-skill-mcp-bridge: remote mount")

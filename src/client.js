@@ -1,5 +1,7 @@
 // dsh-skill-mcp-bridge Client 半部：设置页与工具视图的桥接面板。
 // 通过 Typert Remote（remote.skillMcpBridge.*）调用 host 端 status/setEnabled/rescan/reconnectMcp。
+// React 通过 __ModuleLoader__ 的 require("react") 由 web 平台解析（非全局变量）。
+import React from "react"
 import { BRIDGE_INVOCATIONS } from "./shared.js"
 
 const BRIDGE_REMOTE = {

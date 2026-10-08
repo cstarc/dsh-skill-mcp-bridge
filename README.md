@@ -133,28 +133,46 @@ Host（Node.js）                         Client（浏览器）
 │   · .claude/.agents/.trae   │       │ tool.view.cordis 面板     │
 │   · frontmatter 解析        │       │                          │
 │ tools.register (defineTool) │◄─────►│ ctx.remote.$mount        │
-│   · MCP HTTP/SSE (fetch)    │ typert │  ctx.reflect.get(         │
+│   · MCP HTTP/SSE (fetch)    │ typert │  ctx.get(                 │
 │   · MCP stdio (子进程)      │ RPC    │    "remote.skillMcpBridge")│
 │ timer 指纹轮询             │       │                          │
 └─────────────────────────────┘       └──────────────────────────┘
 ```
 
-- 面板 RPC 走 Typert Remote（`src-json` 宽松 codec），host 端 `@Remote` 装饰器方法 + `ctx.typert.register(MANIFEST)`。
+- 面板 RPC 走 Typert Remote（strict codec + identity `parse`；dsh ≥ 0.2.0-rc.2 要求 codec 携带 `create()` 工厂），host 端 `@Remote` 装饰器方法 + `ctx.typert.register(MANIFEST)`。
 - 工具注册使用 `@deepseek-ai/dsh-tools` 的 `defineTool`（参数 DSL 不支持属性级 `enum/const/oneOf`，桥接时已做 schema 白名单净化）。
 - 网络访问受限环境通过子进程 `node -e` 执行 fetch（沙箱无 fetch）。
 
 ## 构建
 
 ```bash
-esbuild src/index.js  --bundle --format=esm --platform=node   --outfile=lib/index.js  --external:node:* --target=es2020
-esbuild src/client.js --bundle --format=esm --platform=browser --outfile=lib/client.js --log-level=warning
+# NODE_PATH 指向 profile 的 hoisted node_modules，使 @deepseek-ai/dsh-typert-protocol
+# 与 @deepseek-ai/dsh-tools 可被解析（按既有方式打入 bundle）。
+export NODE_PATH=/data/.dsh/profiles/web/node_modules
+
+# Host 半部：ESM，直接输出
+esbuild src/index.js --bundle --format=esm --platform=node \
+  --outfile=lib/index.js --external:node:* --target=es2020
+
+# Client 半部：必须包成 web 模块加载器格式（__ModuleLoader__.load + 注入 require），
+# 否则产物会留下裸 `import React from "react"`，浏览器无法解析，
+# 报 `client-modules: dsh-skill-mcp-bridge import failed (see console)`。
+BANNER="window.__ModuleLoader__.load({ id: 'dsh-skill-mcp-bridge', factory: (require) => { var module = { exports: {} }; var exports = module.exports; Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });"
+FOOTER="; return module.exports; } });"
+esbuild src/client.js --bundle --format=cjs --platform=browser \
+  --outfile=lib/client.js --external:react --log-level=warning \
+  --banner:js="$BANNER" --footer:js="$FOOTER"
 ```
 
 > `--target=es2020` 必要：让 esbuild 转译 TC39 装饰器（Node 原生不支持装饰器语法）。
+> `react` 保持 external，由 web 平台模块加载器提供。
+> 构建后自检：`lib/client.js` 首行必须是 `window.__ModuleLoader__.load(...)`、
+> 且能 grep 到 `require("react")`；host 产物用 `node --check lib/index.js`。
 
 ## 兼容性
 
 - dsh web profile（`nodeLinker: hoisted` 布局）
+- dsh ≥ 0.2.0-rc.2：Typert strict codec 必须提供 `create()` 工厂，运行时以 `codec.create().parse(value)` 做边界校验；缺失会在插件激活期抛 `strict codec has no create() factory`
 - Client 平台包注入：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-tool`、`@deepseek-ai/dsh-client-ui-settings`
 - Node.js ≥ 18（MCP HTTP 子进程使用全局 `fetch`）
 

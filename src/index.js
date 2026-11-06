@@ -64,16 +64,60 @@ export default {
     const tools = ctx.tools
     const providerName = "skill-mcp-bridge"
 
-    const sandboxPolicy = ctx.get("sandboxPolicy")
-    const workspaceRoot = sandboxPolicy ? sandboxPolicy.workspaceRoot : undefined
-    const base = workspaceRoot ? String(workspaceRoot).replace(/\/+$/, "") : ""
-    const stateFile = base ? base + "/.claude/skills-state.json" : ".claude/skills-state.json"
-    const diagFile = base ? base + "/.claude/bridge-diag.log" : ".claude/bridge-diag.log"
+    // 项目根解析：优先取 dsh 已注册的工作区（workspaceRegistry），其次才用
+    // sandboxPolicy.workspaceRoot（部署默认根 = 启动进程的 cwd）。
+    // 以守护/远程方式启动 dsh 时进程 cwd 往往是 $HOME，直接取沙箱根会把项目根认错，
+    // 导致 skills / MCP 全部扫不到；而 workspaceRegistry 在本插件 apply 阶段通常尚未就绪，
+    // 因此先用 ctx.inject 等它可用（最多 8s），再退回沙箱根 / 进程 cwd。
+    let base = ""
+
+    function waitRegistry() {
+      const available = ctx.get("workspaceRegistry")
+      if (available !== undefined) return Promise.resolve(available)
+      return new Promise((resolve) => {
+        let settled = false
+        const finish = (value) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve(value)
+        }
+        const timer = setTimeout(() => finish(undefined), 8000)
+        try {
+          ctx.inject(["workspaceRegistry"], () => finish(ctx.get("workspaceRegistry")))
+        } catch (e) {
+          finish(undefined)
+        }
+      })
+    }
+
+    async function resolveBase() {
+      const cwd = String(process.cwd() || "").replace(/\/+$/, "")
+      const registry = await waitRegistry()
+      if (registry !== undefined) {
+        try {
+          const paths = registry.list().map((w) => String(w.path || "").replace(/\/+$/, "")).filter(Boolean)
+          if (paths.length > 0) {
+            // 进程 cwd 落在某个已注册工作区内时维持原行为；否则取注册表中最新的工作区
+            if (cwd) {
+              for (const p of paths) if (cwd === p || cwd.startsWith(p + "/")) return p
+            }
+            return paths[0]
+          }
+        } catch (e) { /* 注册表不可读时退回沙箱根 */ }
+      }
+      const policy = ctx.get("sandboxPolicy")
+      const root = policy && policy.workspaceRoot ? String(policy.workspaceRoot).replace(/\/+$/, "") : ""
+      return root || cwd
+    }
+
+    const stateFile = () => (base ? base + "/.claude/skills-state.json" : ".claude/skills-state.json")
+    const diagFile = () => (base ? base + "/.claude/bridge-diag.log" : ".claude/bridge-diag.log")
     const joinP = (p) => (p.startsWith("/") ? p : base ? base + "/" + p : p)
 
     async function diag(msg) {
       try {
-        const target = await fs.resolve(diagFile)
+        const target = await fs.resolve(diagFile())
         const stamp = new Date().toISOString()
         let existing = ""
         try {
@@ -95,7 +139,7 @@ export default {
     async function loadState() {
       let existed = false
       try {
-        const target = await fs.resolve(stateFile)
+        const target = await fs.resolve(stateFile())
         const info = await fs.stat(target)
         if (!info || info.type !== "file") return existed
         existed = true
@@ -115,16 +159,30 @@ export default {
 
     async function saveState() {
       try {
-        const target = await fs.resolve(stateFile)
+        const target = await fs.resolve(stateFile())
         await fs.writeText(target, JSON.stringify(state, null, 2))
       } catch (e) {
         console.error("skill-mcp-bridge: 持久化失败: " + String(e))
       }
     }
 
-    const ready = loadState().then((existed) => {
-      if (!existed) return saveState()
-    })
+    // 部署默认的 workspace-write 根取自进程 cwd；本插件已按工作区注册表定根，
+    // 若二者不一致就把默认根对齐，否则插件自身对状态/诊断文件的写入会被沙箱拒绝。
+    function alignPolicyRoot() {
+      try {
+        const policy = ctx.get("sandboxPolicy")
+        if (policy && base && policy.workspaceRoot !== base) policy.workspaceRoot = base
+      } catch (e) { /* 只读策略实现下忽略 */ }
+    }
+
+    // 先定根再读状态：状态文件与诊断文件都挂在 base 下
+    const ready = (async () => {
+      base = await resolveBase()
+      alignPolicyRoot()
+      const existed = await loadState()
+      if (!existed) await saveState()
+      return existed
+    })()
 
     // ---------- frontmatter 解析 ----------
     function parseScalar(value) {
@@ -1045,12 +1103,15 @@ export default {
       return () => { void dispose() }
     }, "dsh-skill-mcp-bridge: typert manifest")
 
-    void ready.then(() => {
-      void reconcileMcp().catch((e) => {
+    void ready.then(async () => {
+      // 先落诊断再对账：diag 是"读-追加-写"，与并发的 MCP 日志会互相覆盖
+      await diag("skill-mcp-bridge static plugin started, base=" + base)
+      try {
+        await reconcileMcp()
+      } catch (e) {
         console.error("skill-mcp-bridge: 初始 MCP 对账失败: " + String(e))
         void diag("initial reconcile ERROR: " + String(e && e.message ? e.message : e))
-      })
+      }
     })
-    void diag("skill-mcp-bridge static plugin started, base=" + base)
   },
 }

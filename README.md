@@ -1,5 +1,7 @@
 # dsh-skill-mcp-bridge
 
+> 当前版本：**1.1.0**（变更历史见文末[更新日志](#更新日志)）
+
 dsh（DeepSeek Harness）项目桥接插件：**自动导入 `.claude/.agents/.trae` 下的 skills**，并**桥接工作区 MCP 服务器**（HTTP/SSE 与 stdio 双传输），全部功能由 GUI 开关控制、状态持久化。
 
 - 技能导入：`.claude/skills`、`.agents/skills`、`.trae/skills`，以及 `.claude/agents`、`.claude/commands`
@@ -111,7 +113,16 @@ dsh --profile web --dump-config   # 应看到 dsh-skill-mcp-bridge 行
 
 ## 状态持久化
 
-开关状态保存于 `<工作区>/.claude/skills-state.json`：
+**项目根（base）解析**：插件激活时等待 `workspaceRegistry` 就绪（最多 8 秒）后按以下顺序定根：
+
+1. 进程 cwd 命中某个已注册工作区（等于该路径或位于其下）→ 取该工作区路径
+2. 否则取注册表中最新注册的工作区
+3. 回退 `sandboxPolicy.workspaceRoot`（部署默认根 = 启动进程 cwd）
+4. 最后回退进程 cwd
+
+定根后会把 `sandboxPolicy.workspaceRoot` 对齐到该项目根，保证状态/诊断文件写入不被 fs 沙箱拒绝。守护/远程方式从任意目录启动 dsh 时也能正确定位项目根。
+
+开关状态保存于 `<项目根>/.claude/skills-state.json`：
 
 ```json
 {
@@ -122,7 +133,7 @@ dsh --profile web --dump-config   # 应看到 dsh-skill-mcp-bridge 行
 }
 ```
 
-诊断日志：`<工作区>/.claude/bridge-diag.log`（截断 8000 字符）。
+诊断日志：`<项目根>/.claude/bridge-diag.log`（截断 8000 字符）。
 
 ## 架构
 
@@ -175,6 +186,23 @@ esbuild src/client.js --bundle --format=cjs --platform=browser \
 - dsh ≥ 0.2.0-rc.2：Typert strict codec 必须提供 `create()` 工厂，运行时以 `codec.create().parse(value)` 做边界校验；缺失会在插件激活期抛 `strict codec has no create() factory`
 - Client 平台包注入：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-tool`、`@deepseek-ai/dsh-client-ui-settings`
 - Node.js ≥ 18（MCP HTTP 子进程使用全局 `fetch`）
+
+## 更新日志
+
+### 1.1.0（2026-11-10）
+
+- 修复守护/远程方式启动时项目根认错：base 原取 `sandboxPolicy.workspaceRoot`（即启动进程 cwd），
+  dsh 从 `$HOME` 等任意目录启动时会把项目根认错，导致 `.claude/.agents/.trae` skills 与
+  `.mcp.json` 全部扫不到；改为等 `workspaceRegistry` 就绪后按已注册工作区定根
+  （cwd 命中 > 最新注册工作区 > 沙箱根 > cwd），详见[状态持久化](#状态持久化)
+- 兼容 dsh ≥ 0.2.0-rc.2：Typert strict codec 补 `create()` 工厂，修复插件激活期抛
+  `strict codec has no create() factory`
+- client 改用 dsh-skill-manager 模式挂载 remote（`ctx.get` 取 remote + 手写 identity codec），
+  client bundle 564KB → 18KB
+
+### 1.0.0
+
+- 首个发布版本：`.claude/.agents/.trae` skills 导入、MCP 桥接（HTTP/SSE + stdio）、GUI 开关面板
 
 ## License
 

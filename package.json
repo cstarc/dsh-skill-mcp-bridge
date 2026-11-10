@@ -1,7 +1,7 @@
 {
   "name": "dsh-skill-mcp-bridge",
   "description": "dsh 项目桥接：自动导入 .claude/.agents/.trae skills，桥接 MCP 服务器（HTTP/SSE + stdio），GUI 开关面板。",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
